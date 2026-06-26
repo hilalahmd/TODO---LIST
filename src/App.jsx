@@ -194,6 +194,30 @@ const GROUP_LABELS = {
   'this-week': 'This Week', later: 'Later', unscheduled: 'Unscheduled',
 }
 
+/* ─── ProgressRing ────────────────────────────────────────── */
+function ProgressRing({ total, completed }) {
+  const pct = total === 0 ? 0 : Math.round((completed / total) * 100)
+  const r    = 20
+  const circ = 2 * Math.PI * r
+  const fill = (pct / 100) * circ
+  return (
+    <div className="progress-ring">
+      <svg viewBox="0 0 48 48" fill="none">
+        <circle cx="24" cy="24" r={r} stroke="#E5E4DF" strokeWidth="3" className="track" />
+        <circle
+          cx="24" cy="24" r={r}
+          stroke="#D95F2B" strokeWidth="3"
+          strokeDasharray={`${fill} ${circ}`}
+          strokeLinecap="round"
+          className="fill"
+          style={{ transform: 'rotate(-90deg)', transformOrigin: '24px 24px', transition: 'stroke-dasharray 0.6s ease' }}
+        />
+      </svg>
+      <span className="pct">{pct}%</span>
+    </div>
+  )
+}
+
 /* ─── PriorityDot ──────────────────────────────────────────── */
 function PriorityDot({ priority }) {
   return <span className="priority-dot" title={priority} />
@@ -213,6 +237,58 @@ function DueDateDisplay({ dueDate, onEdit, now }) {
       </svg>
       {fmt.text}
     </button>
+  )
+}
+
+/* ─── Countdown ───────────────────────────────────────────── */
+function Countdown({ dueDate, now, completed }) {
+  if (!dueDate || completed) return null
+
+  const due      = new Date(dueDate)
+  const diff     = due - now
+  const isOver   = diff < 0
+  const abs      = Math.abs(diff)
+  const totalSec = Math.floor(abs / 1000)
+  const sec      = totalSec % 60
+  const totalMin = Math.floor(totalSec / 60)
+  const min      = totalMin % 60
+  const totalHr  = Math.floor(totalMin / 60)
+  const hr       = totalHr % 24
+  const days     = Math.floor(totalHr / 24)
+
+  let text, level
+
+  if (isOver) {
+    if (totalMin < 1)       text = 'just now'
+    else if (totalHr < 1)   text = `${totalMin}m overdue`
+    else if (days < 1)      text = `${totalHr}h ${min}m overdue`
+    else                    text = `${days}d overdue`
+    level = 'overdue'
+  } else {
+    if (days >= 7)          { text = `${days}d left`;                    level = 'safe'    }
+    else if (days >= 1)     { text = `${days}d ${hr}h left`;             level = 'safe'    }
+    else if (totalHr >= 3)  { text = `${hr}h ${min}m left`;              level = 'safe'    }
+    else if (totalHr >= 1)  { text = `${hr}h ${min}m left`;              level = 'warning' }
+    else if (totalMin >= 1) { text = `${min}m ${sec}s left`;             level = 'danger'  }
+    else                    { text = `${totalSec}s left`;                 level = 'danger'  }
+  }
+
+  return (
+    <span className={`countdown countdown-${level}`}>
+      {!isOver ? (
+        <svg viewBox="0 0 12 12" fill="none">
+          <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.1" />
+          <path d="M6 3.5V6l1.8 1.8" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+        </svg>
+      ) : (
+        <svg viewBox="0 0 12 12" fill="none">
+          <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.1" />
+          <path d="M6 4v2.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+          <circle cx="6" cy="8.2" r="0.6" fill="currentColor" />
+        </svg>
+      )}
+      {text}
+    </span>
   )
 }
 
@@ -255,6 +331,7 @@ function TodoItem({ todo, onToggle, onDelete, onEdit, onSetDueDate, index, onDra
   return (
     <li
       className={`todo-item${todo.completed ? ' completed' : ''}${isOverdue ? ' is-overdue' : ''}`}
+      data-priority={todo.priority}
       draggable
       onDragStart={e => onDragStart(e, index)}
       onDragOver={e => onDragOver(e, index)}
@@ -324,6 +401,10 @@ function TodoItem({ todo, onToggle, onDelete, onEdit, onSetDueDate, index, onDra
           )}
         </div>
 
+        {todo.dueDate && (
+          <Countdown dueDate={todo.dueDate} now={now} completed={todo.completed} />
+        )}
+
         <button className="delete-btn" onClick={() => onDelete(todo.id)} aria-label="Move to bin">
           <svg viewBox="0 0 10 10" fill="none">
             <path d="M1 1l8 8M9 1L1 9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
@@ -335,9 +416,19 @@ function TodoItem({ todo, onToggle, onDelete, onEdit, onSetDueDate, index, onDra
 }
 
 /* ─── BinItem ──────────────────────────────────────────────── */
-function BinItem({ item, onRestore, onDelete }) {
+function BinItem({ item, onRestore, onDelete, now }) {
   const timeAgo = (() => {
-    const diff = Date.now() - item.deletedAt
+    // Guard: if deletedAt is missing or 0 (corrupted data), show 'Just now'
+    if (!item.deletedAt || item.deletedAt <= 0) return 'Just now'
+
+    const diff = now.getTime() - item.deletedAt
+
+    // Guard: if diff is negative or unreasonably large (>30 days), show date instead
+    if (diff < 0) return 'Just now'
+    if (diff > 30 * 24 * 60 * 60 * 1000) {
+      return new Date(item.deletedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    }
+
     const mins = Math.floor(diff / 60000)
     if (mins < 1)  return 'Just now'
     if (mins < 60) return `${mins}m ago`
@@ -387,6 +478,7 @@ function AddTodoBar({ onAdd, prefillDate }) {
   const [dueDate, setDueDate]   = useState(prefillDate || '')
   const [open, setOpen]         = useState(false)
   const inputRef = useRef(null)
+  const formRef  = useRef(null)
 
   useEffect(() => { if (prefillDate) setDueDate(prefillDate) }, [prefillDate])
 
@@ -399,10 +491,23 @@ function AddTodoBar({ onAdd, prefillDate }) {
     onAdd(text, priority, dueDate ? new Date(dueDate).toISOString() : null)
     setText('')
     setDueDate(prefillDate || '')
+    setOpen(false)
+  }
+
+  // Only close the options panel when focus leaves the entire form
+  const handleFormBlur = e => {
+    if (!formRef.current?.contains(e.relatedTarget)) {
+      setOpen(false)
+    }
   }
 
   return (
-    <form className="add-bar" onSubmit={handleSubmit}>
+    <form
+      ref={formRef}
+      className="add-bar"
+      onSubmit={handleSubmit}
+      onBlur={handleFormBlur}
+    >
       <div className="add-row">
         <button type="button" className="add-icon-btn" onClick={() => { inputRef.current?.focus() }}>
           <svg viewBox="0 0 14 14" fill="none">
@@ -416,7 +521,6 @@ function AddTodoBar({ onAdd, prefillDate }) {
           value={text}
           onChange={e => setText(e.target.value)}
           onFocus={() => setOpen(true)}
-          onBlur={() => setTimeout(() => setOpen(false), 200)}
         />
         {text && (
           <button type="submit" className="submit-btn">
@@ -543,16 +647,24 @@ export default function App() {
   const dragItem     = useRef(null)
   const dragOverItem = useRef(null)
 
+  // Tasks visible today = no due date OR due today or earlier (overdue)
+  const todayEnd = new Date(now)
+  todayEnd.setHours(23, 59, 59, 999)
+
+  const isForToday = t => !t.dueDate || new Date(t.dueDate) <= todayEnd
+
   const filtered = todos.filter(t => {
-    if (filter === 'Active')    return !t.completed
+    if (filter === 'Active')    return !t.completed && isForToday(t)
     if (filter === 'Completed') return  t.completed
-    return true
+    return isForToday(t)   // 'All' — hides tomorrow+ tasks
   })
 
-  const activeCount    = todos.filter(t => !t.completed).length
-  const completedCount = todos.filter(t =>  t.completed).length
-  const binCount       = bin.length
-  const overdueCount   = todos.filter(t => !t.completed && t.dueDate && new Date(t.dueDate) < now).length
+  const todayActiveCount  = todos.filter(t => !t.completed && isForToday(t)).length
+  const futureCount       = todos.filter(t => !t.completed && !isForToday(t)).length
+  const activeCount       = todos.filter(t => !t.completed).length
+  const completedCount    = todos.filter(t =>  t.completed).length
+  const binCount          = bin.length
+  const overdueCount      = todos.filter(t => !t.completed && t.dueDate && new Date(t.dueDate) < now).length
 
   const handleDragStart = (e, i) => { dragItem.current = i; e.dataTransfer.effectAllowed = 'move' }
   const handleDragOver  = (e, i) => { e.preventDefault(); dragOverItem.current = i }
@@ -577,19 +689,22 @@ export default function App() {
   const headingText = () => {
     if (filter === 'Bin')      return 'Bin'
     if (filter === 'Schedule') return 'Schedule'
-    if (activeCount === 0 && todos.length > 0) return 'All done'
-    if (activeCount === 0)     return 'My Tasks'
-    return `${activeCount} task${activeCount !== 1 ? 's' : ''}`
+    if (todayActiveCount === 0 && todos.length > 0 && futureCount === 0) return 'All done 🎉'
+    if (todayActiveCount === 0) return 'Today'
+    return `${todayActiveCount} for today`
   }
 
   return (
     <div className="app">
       <header className="header">
-        <div className="header-top">
-          <p className="date">{dateStr}</p>
-          <span className="clock">{clockStr}</span>
+        <div className="header-left">
+          <div className="header-top">
+            <p className="date">{dateStr}</p>
+            <span className="clock">{clockStr}</span>
+          </div>
+          <h1 className="title">{headingText()}</h1>
         </div>
-        <h1 className="title">{headingText()}</h1>
+        <ProgressRing total={todos.length} completed={completedCount} />
       </header>
 
       <OverdueBanner count={overdueCount} onView={() => setFilter('Schedule')} />
@@ -602,10 +717,14 @@ export default function App() {
         {FILTERS.map(f => (
           <button key={f} className={`filter-btn${filter === f ? ' active' : ''}`} onClick={() => setFilter(f)}>
             {f}
-            {f === 'Bin'       && binCount       > 0 && <span className="badge">{binCount}</span>}
-            {f === 'Completed' && completedCount  > 0 && <span className="badge">{completedCount}</span>}
-            {f === 'Active'    && activeCount     > 0 && <span className="badge">{activeCount}</span>}
-            {f === 'Schedule'  && overdueCount    > 0 && <span className="badge overdue-badge">{overdueCount}</span>}
+            {f === 'Bin'       && binCount        > 0 && <span className="badge">{binCount}</span>}
+            {f === 'Completed' && completedCount   > 0 && <span className="badge">{completedCount}</span>}
+            {f === 'Active'    && todayActiveCount > 0 && <span className="badge">{todayActiveCount}</span>}
+            {f === 'Schedule'  && (overdueCount > 0 || futureCount > 0) && (
+              <span className={`badge${overdueCount > 0 ? ' overdue-badge' : ''}`}>
+                {overdueCount > 0 ? overdueCount : futureCount}
+              </span>
+            )}
           </button>
         ))}
       </nav>
@@ -626,7 +745,7 @@ export default function App() {
             <p className="bin-hint">Items can be restored to their original position.</p>
             <ul className="todo-list">
               {bin.map(item => (
-                <BinItem key={item.id} item={item} onRestore={restoreFromBin} onDelete={permanentDelete} />
+                <BinItem key={item.id} item={item} now={now} onRestore={restoreFromBin} onDelete={permanentDelete} />
               ))}
             </ul>
             <button className="clear-btn" onClick={emptyBin}>Empty bin ({binCount})</button>
@@ -654,10 +773,23 @@ export default function App() {
                 <path d="M20 32h24M32 20v24" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
               </svg>
               <p>
-                {filter === 'Completed' ? 'No completed tasks'
-                  : filter === 'Active' ? 'No active tasks'
-                  : 'No tasks yet'}
+                {filter === 'Completed'
+                  ? 'No completed tasks'
+                  : filter === 'Active'
+                  ? 'No active tasks for today'
+                  : futureCount > 0
+                  ? `Nothing for today — ${futureCount} task${futureCount !== 1 ? 's' : ''} scheduled later`
+                  : 'No tasks for today'}
               </p>
+              {(filter === 'All' || filter === 'Active') && futureCount > 0 && (
+                <button
+                  className="clear-btn"
+                  style={{ marginTop: 4 }}
+                  onClick={() => setFilter('Schedule')}
+                >
+                  View schedule →
+                </button>
+              )}
             </div>
           ) : (
             <ul className="todo-list">
